@@ -6,24 +6,36 @@ from __future__ import annotations
 
 import streamlit as st
 
+from briefing.scheduler import start as start_scheduler
 from config.settings import configure_logging, ensure_runtime_dirs
 from ui.components.layout import page_layout
+from ui.pages import briefing_page
 from ui.pages import dashboard as dashboard_page
+from ui.pages import portfolio as portfolio_page
 from ui.pages import settings_page
+from ui.pages import signals_page
 
 
 def main() -> None:
     ensure_runtime_dirs()
     configure_logging()
+    if not st.session_state.get("scheduler_started"):
+        st.session_state["scheduler_started"] = start_scheduler()
 
     with page_layout("Investment Decision-Support Dashboard"):
         page = st.sidebar.radio(
             "Navigation",
-            ["Dashboard", "Settings"],
+            ["Dashboard", "Portfolio & Goal", "Signals", "Briefing", "Settings"],
             index=0,
         )
         if page == "Dashboard":
             dashboard_page.render()
+        elif page == "Portfolio & Goal":
+            portfolio_page.render()
+        elif page == "Signals":
+            signals_page.render()
+        elif page == "Briefing":
+            briefing_page.render()
         else:
             settings_page.render()
 

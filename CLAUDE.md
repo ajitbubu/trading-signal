@@ -248,15 +248,21 @@ pytest -q
 
 ## 11. Schema (SQLite)
 
-> Filled in by the implementation. Update this section when migrations land.
+> Tables created on app startup via `Base.metadata.create_all()` (DECISIONS.md D-008). Defined in `portfolio/models.py`.
 
-Expected tables (initial):
-- `holdings` — user portfolio positions
-- `watchlist` — tickers user is tracking but doesn't hold
-- `signals_history` — every signal surfaced, with rule, timestamp, subsequent price action (for hit-rate)
-- `briefings` — generated briefings metadata
-- `news_cache` — recently fetched news items (deduped by URL)
-- `settings` — user-configurable rules, thresholds, schedules
+| Table | Columns |
+|---|---|
+| `holdings` | id, ticker, exchange, quantity, avg_cost, purchase_date, currency, stop_loss_pct, profit_target_pct, trailing_stop_pct, high_since_entry |
+| `watchlist` | id, ticker, exchange, added_at |
+| `signals_history` | id, ticker, rule, direction, fired_at, price_at_fire, price_5d, price_20d, price_60d |
+| `briefings` | id, market, generated_at, snapshot_path |
+| `news_cache` | id, url (unique), headline, source, published_at, sentiment |
+| `settings` | key (PK), value |
+
+`settings` keys used by the app:
+- `starting_capital_usd` — base capital for goal math
+- `annual_target_pct` — e.g. `0.50`
+- `goal_start_date` — ISO date
 
 ---
 
@@ -266,6 +272,10 @@ Expected tables (initial):
 - `yfinance` is the default OHLCV / fundamentals source despite known reliability issues; swap to Polygon or Finnhub paid via the `MarketDataProvider` interface when the user provides a key (DECISIONS.md D-002).
 - News in v1 is single-provider (Finnhub free tier). MarketAux + RSS land in a follow-up; the dispatcher in `news/aggregator.py` already supports multi-source merge with URL+headline dedupe.
 - RSI uses an iterative Wilder-seeded smoothing rather than `pandas.ewm(adjust=False)` because pandas seeds the EWM with the first observation while Wilder uses the SMA of the first `period` observations — the difference is meaningful and tests pin our values to Wilder's published 1978 fixture (DECISIONS.md D-010).
+- Portfolio CSV importer auto-detects between the documented canonical schema and Fidelity's `Portfolio_Positions` export. Fidelity exports omit `purchase_date`; we default to Jan 1 of the current year (DECISIONS.md D-012).
+- USDINR FX uses yfinance `USDINR=X` primary with `exchangerate.host` fallback after 3 consecutive yfinance failures (DECISIONS.md D-013).
+- Briefing emails are multipart text+HTML; the HTML body is a naive markdown wrap (no extra dependency). Full-fidelity copy lives in the `.md` snapshot on disk (DECISIONS.md D-014).
+- APScheduler `BackgroundScheduler` runs in-process inside Streamlit. `python -m briefing.run` is retained as a CLI entry point so users running headless can drive it via cron (DECISIONS.md D-015).
 - AI summaries and broker integration are feature-flagged off in v1 (DECISIONS.md D-003).
 
 ---

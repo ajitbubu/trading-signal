@@ -96,3 +96,58 @@ stubs for `goals/`, `signals/`, `portfolio/`, `briefing/` ahead of fence.
 **Decision:** Stripped per user direction (option B) to keep PR #1's diff
 matching the scope. Stubs will be re-introduced — with implementations,
 not contracts — in the Step 5–9 session.
+
+### D-012: CSV importer auto-detects Fidelity vs canonical schema
+**Context:** §5 / §11. The user's real holdings export is in Fidelity's
+`Portfolio_Positions_*.csv` format, which differs from the canonical
+schema documented in `README.md` (`ticker,exchange,quantity,avg_cost,
+purchase_date,currency`).
+**Decision:** `portfolio/importer.parse_csv` auto-detects format by
+header signature: BOM-stripped first line containing `ticker` +
+`avg_cost` → canonical; containing `Symbol` + `Average Cost Basis` →
+Fidelity. Fidelity rows with empty Quantity (cash money market) and
+symbols ending in `**`/`***` (cash markers) are skipped. Trailing
+disclaimer rows with no Symbol or non-numeric Quantity are skipped.
+Numeric strings have `$`/`,`/`+`/`%` stripped. Missing `purchase_date`
+defaults to `date(today.year, 1, 1)` so YTD math has a sensible anchor.
+**Revisit when:** another broker format is added — refactor to a
+registry of header → parser instead of an if-chain.
+
+### D-013: USDINR FX fallback ladder operationalized
+**Context:** §5 / D-007. yfinance `USDINR=X` is the default, but
+empirically returns null on weekends and during NSE holidays.
+**Decision:** `portfolio/fx.usd_to_inr()` uses yfinance primary; after
+3 consecutive failures, falls back to
+`https://api.exchangerate.host/latest?base=USD&symbols=INR` (free,
+no key, generous limits). Both paths cache 1h in diskcache. If both
+fail and no cached value exists, returns the literal `83.0` as a
+last-resort default and logs `fx_all_providers_failed` at error level.
+**Revisit when:** exchangerate.host limits change, or the user
+provides a paid FX key.
+
+### D-014: Briefing email body is markdown text + simple HTML wrap
+**Context:** §8. The briefing on disk is markdown for full fidelity.
+Email needs a presentable HTML alternative.
+**Decision:** `briefing/delivery/email.py` builds a multipart message:
+plain-text body = the raw markdown; HTML body = naive transform
+(html-escape, regex `**bold**` → `<strong>`, paragraphs by double
+newline). No `markdown`/`mistune` dependency added. Briefing readers
+who need full fidelity can open the `.md` snapshot on disk.
+**Revisit when:** a user complains that the HTML email looks plain.
+At that point, add `markdown-it-py` and a sane CSS template.
+
+### D-015: Briefing scheduler runs in-process inside Streamlit
+**Context:** §8 / answers §25. APScheduler ships two cron jobs at
+08:00 IST (NSE) and 07:30 ET (US). The user picked in-process.
+**Decision:** `briefing/scheduler.start()` builds a
+`BackgroundScheduler(daemon=True)` on first call from `app.main()`.
+Idempotent via a module-level `_started` flag (Streamlit reruns the
+script on every interaction, so re-entry is the common case).
+`python -m briefing.run` is retained as the headless entry point —
+users running on a server can drive it via cron and keep the in-process
+scheduler off (the flag is checked but the env doesn't need to set
+anything special; the BackgroundScheduler simply never gets a chance
+to run when the app isn't open).
+**Revisit when:** missed briefings become a complaint, in which case
+we move the scheduler to a separate `scripts/briefing_daemon.py` with
+a systemd/launchd unit.
