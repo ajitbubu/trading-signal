@@ -26,7 +26,7 @@ A personal investment **decision-support dashboard** with three coordinated capa
 | Scheduler | APScheduler embedded + optional cron entry point | App-embedded for default; cron for headless reliability |
 | Concurrency | `asyncio` + `httpx` for I/O; bounded semaphores per provider | Respect rate limits cleanly |
 | Caching | `diskcache` (multi-tier TTLs) | Persists across runs; no Redis dependency |
-| Indicators | `pandas_ta` | Vetted RSI / DMA implementations |
+| Indicators | in-tree (`indicators/technical.py`) | Wilder-seeded RSI matches the 1978 fixture; `pandas_ta` rejected because its pre-release versions fail Python 3.11 install resolution (DECISIONS.md D-010) |
 | Sentiment | Provider-supplied first, `vaderSentiment` fallback | FinBERT deferred to v1.1 (compute cost) |
 | News ingestion | API adapters + `feedparser` for RSS + `trafilatura` for body extraction; `rapidfuzz` for de-duplication | Source diversity is mandatory |
 | LLM features | Optional, behind feature flag, via Anthropic API | AI summaries off by default |
@@ -36,7 +36,8 @@ A personal investment **decision-support dashboard** with three coordinated capa
 ## 3. Tech Stack & Pinned Dependencies
 
 See `requirements.txt`. Notable:
-- `yfinance`, `nsepython`, `pandas`, `pandas_ta`, `httpx`, `streamlit`, `apscheduler`, `sqlalchemy`, `diskcache`, `feedparser`, `trafilatura`, `rapidfuzz`, `vaderSentiment`, `pydantic`, `structlog`, `python-dotenv`, `pytest`.
+- `yfinance`, `nsepython`, `pandas`, `httpx`, `streamlit`, `apscheduler`, `sqlalchemy`, `diskcache`, `feedparser`, `trafilatura`, `rapidfuzz`, `vaderSentiment`, `pydantic`, `structlog`, `python-dotenv`, `pytest`.
+- Indicators are implemented in-tree (`indicators/technical.py`) — `pandas_ta` is intentionally not a dependency (DECISIONS.md D-010).
 
 ---
 
@@ -116,10 +117,11 @@ See `requirements.txt`. Notable:
 
 | Provider | Used for | Free-tier limits | Strategy |
 |---|---|---|---|
-| `yfinance` | OHLCV, fundamentals (US + India) | Undocumented, observed ~2000 req/hr; bursty 429s | Batched multi-ticker download; semaphore=8; exponential backoff with jitter |
-| `nsepython` / NSE official | Nifty 500 constituents | Unofficial scraping; respect 1 req/sec | Cache constituents list 24h |
-| `nasdaqtrader.com` symbol files | NYSE / NASDAQ universe | Static daily files | Cache 24h |
-| FX rate source | INR↔USD | TBD (yfinance `USDINR=X` default) | Cache 1h |
+| `yfinance` | OHLCV, fundamentals (US + India) | Undocumented, observed ~2000 req/hr; bursty 429s | Batched multi-ticker download (50/batch); token-bucket 4 rps / burst 8; tenacity retry with exponential jitter, max 3 attempts |
+| `nsepython` / NSE official | Nifty 500 constituents | Unofficial scraping; respect 1 req/sec | Cache constituents list 24h; falls back to last cached on failure |
+| Wikipedia (S&P 500 + Nasdaq-100 articles) | NYSE / NASDAQ universe | None | `pd.read_html` over the article tables; cached 24h. Chosen over `nasdaqtrader.com` symbol files because those include thousands of ETFs/derivatives we'd have to filter — see DECISIONS.md D-009 |
+| Finnhub `/news` + `/company-news` | Market + ticker news, sentiment passthrough | 60 calls/min (free) | Token-bucket 1 rps / burst 5; per-ticker calls only for screener-qualified + watchlist; 5-min cache; graceful skip when `FINNHUB_API_KEY` is unset |
+| FX rate source | INR↔USD | TBD (yfinance `USDINR=X` default) | Cache 1h; fallback to `exchangerate.host` per DECISIONS.md D-007 |
 
 ### News & research
 
@@ -247,23 +249,35 @@ pytest -q
 
 ## 11. Schema (SQLite)
 
-> Filled in by the implementation. Update this section when migrations land.
+> Tables created on app startup via `Base.metadata.create_all()` (DECISIONS.md D-008). Defined in `portfolio/models.py`.
 
-Expected tables (initial):
-- `holdings` — user portfolio positions
-- `watchlist` — tickers user is tracking but doesn't hold
-- `signals_history` — every signal surfaced, with rule, timestamp, subsequent price action (for hit-rate)
-- `briefings` — generated briefings metadata
-- `news_cache` — recently fetched news items (deduped by URL)
-- `settings` — user-configurable rules, thresholds, schedules
+| Table | Columns |
+|---|---|
+| `holdings` | id, ticker, exchange, quantity, avg_cost, purchase_date, currency, stop_loss_pct, profit_target_pct, trailing_stop_pct, high_since_entry |
+| `watchlist` | id, ticker, exchange, added_at |
+| `signals_history` | id, ticker, rule, direction, fired_at, price_at_fire, price_5d, price_20d, price_60d |
+| `briefings` | id, market, generated_at, snapshot_path |
+| `news_cache` | id, url (unique), headline, source, published_at, sentiment |
+| `settings` | key (PK), value |
+
+`settings` keys used by the app:
+- `starting_capital_usd` — base capital for goal math
+- `annual_target_pct` — e.g. `0.50`
+- `goal_start_date` — ISO date
 
 ---
 
 ## 12. Known Trade-offs (link to DECISIONS.md for detail)
 
-- NYSE / NASDAQ universe defaults to a curated large/mid-cap subset (S&P 500 + Nasdaq-100 + selected mid-caps, ~700 tickers) on free APIs. Full listings (~5,000 combined) require a paid feed.
-- `yfinance` is the default data source despite known reliability issues; swap to Polygon or Finnhub when the user provides a key.
-- AI summaries and broker integration are feature-flagged off in v1.
+- NYSE / NASDAQ universe defaults to a curated subset: **S&P 500 + Nasdaq-100 (~600 unique tickers)**, fetched from Wikipedia and cached 24h (DECISIONS.md D-001, D-009). Full ~5,000-ticker listings require a paid feed.
+- `yfinance` is the default OHLCV / fundamentals source despite known reliability issues; swap to Polygon or Finnhub paid via the `MarketDataProvider` interface when the user provides a key (DECISIONS.md D-002).
+- News in v1 is single-provider (Finnhub free tier). MarketAux + RSS land in a follow-up; the dispatcher in `news/aggregator.py` already supports multi-source merge with URL+headline dedupe.
+- RSI uses an iterative Wilder-seeded smoothing rather than `pandas.ewm(adjust=False)` because pandas seeds the EWM with the first observation while Wilder uses the SMA of the first `period` observations — the difference is meaningful and tests pin our values to Wilder's published 1978 fixture (DECISIONS.md D-010).
+- Portfolio CSV importer auto-detects between the documented canonical schema and Fidelity's `Portfolio_Positions` export. Fidelity exports omit `purchase_date`; we default to Jan 1 of the current year (DECISIONS.md D-012).
+- USDINR FX uses yfinance `USDINR=X` primary with `exchangerate.host` fallback after 3 consecutive yfinance failures (DECISIONS.md D-013).
+- Briefing emails are multipart text+HTML; the HTML body is a naive markdown wrap (no extra dependency). Full-fidelity copy lives in the `.md` snapshot on disk (DECISIONS.md D-014).
+- APScheduler `BackgroundScheduler` runs in-process inside Streamlit. `python -m briefing.run` is retained as a CLI entry point so users running headless can drive it via cron (DECISIONS.md D-015).
+- AI summaries and broker integration are feature-flagged off in v1 (DECISIONS.md D-003).
 
 ---
 
@@ -271,7 +285,11 @@ Expected tables (initial):
 
 > Move items to DECISIONS.md once resolved.
 
-- [ ] Confirm SMTP provider for briefing email (Gmail app password, SendGrid free tier, or other).
-- [ ] Decide whether to run both NSE and US briefings, or only the user's primary market.
-- [ ] Pick FX source if USDINR via yfinance proves unreliable.
-- [ ] Backtest window: 1 year vs. 3 years for default rule-set evaluation.
+- [x] SMTP provider — Gmail App Password (D-006). `.env.example` carries the
+      required keys; any SMTP host works because the mailer only uses `smtplib`.
+- [x] NSE vs US schedule — both run by default; `BRIEFING_COMBINE=true`
+      collapses to a single combined email (D-005).
+- [x] FX source — yfinance `USDINR=X` primary, `exchangerate.host` fallback
+      after 3 consecutive failures (D-007 / D-013).
+- [x] Backtest window — 1 year for v1, 3 years deferred to v1.1 (D-004).
+      Implementation in `scripts/backtest.py`.
