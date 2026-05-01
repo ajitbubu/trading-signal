@@ -63,3 +63,36 @@ generous limits) for that refresh cycle.
 **Decision:** Schema is created via `Base.metadata.create_all()` on startup.
 When a non-additive schema change is needed, add a migration script in
 `scripts/migrations/` and document in this log. Promote to Alembic in v2.
+
+### D-009: NYSE / NASDAQ constituents fetched via Wikipedia, not nasdaqtrader.com
+**Context:** §5 originally listed `nasdaqtrader.com` symbol files
+(`nasdaqlisted.txt`, `otherlisted.txt`).
+**Decision:** Use `pd.read_html` over the public Wikipedia articles for
+S&P 500 and Nasdaq-100. The nasdaqtrader files include thousands of
+ETFs, ADRs, warrants, and preferred shares we'd have to filter, while
+the Wikipedia tables are clean and structured. Both sources are equally
+fragile to upstream changes; Wikipedia parses faster and lines up with
+yfinance's symbol conventions. Cached 24h via diskcache.
+**Revisit when:** the universe's curated subset is no longer enough — at
+that point we adopt nasdaqtrader files plus a sector/instrument-type
+filter, or move to a paid feed.
+
+### D-010: RSI uses iterative Wilder seed + smoothing, not pandas EWM
+**Context:** §6. The naive vectorized `ewm(alpha=1/period, adjust=False)`
+approach seeds with the first observation, while Wilder (1978) seeds
+with the SMA of the first `period` gains/losses. The difference produces
+RSI values 5–20 points off Wilder's published example.
+**Decision:** Implement RSI iteratively: SMA seed at index `period`,
+then `avg_t = (avg_{t-1} * (period - 1) + x_t) / period` afterwards.
+Pinned to Wilder's canonical 19-bar fixture in `tests/test_indicators.py`.
+Performance hit is negligible for our O(500 tickers × 60 bars) workload.
+**Revisit when:** universe grows >5,000 tickers or we move RSI to
+intraday bars. At that point, vectorize via a hybrid SMA-then-EWM trick.
+
+### D-011: Step 4 strip — overshoot stubs removed
+**Context:** First-session scope per `answers-prefilled.md` is Steps 1–4
+(scaffold + screener + news). The initial scaffold included pure-function
+stubs for `goals/`, `signals/`, `portfolio/`, `briefing/` ahead of fence.
+**Decision:** Stripped per user direction (option B) to keep PR #1's diff
+matching the scope. Stubs will be re-introduced — with implementations,
+not contracts — in the Step 5–9 session.

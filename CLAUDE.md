@@ -116,10 +116,11 @@ See `requirements.txt`. Notable:
 
 | Provider | Used for | Free-tier limits | Strategy |
 |---|---|---|---|
-| `yfinance` | OHLCV, fundamentals (US + India) | Undocumented, observed ~2000 req/hr; bursty 429s | Batched multi-ticker download; semaphore=8; exponential backoff with jitter |
-| `nsepython` / NSE official | Nifty 500 constituents | Unofficial scraping; respect 1 req/sec | Cache constituents list 24h |
-| `nasdaqtrader.com` symbol files | NYSE / NASDAQ universe | Static daily files | Cache 24h |
-| FX rate source | INR↔USD | TBD (yfinance `USDINR=X` default) | Cache 1h |
+| `yfinance` | OHLCV, fundamentals (US + India) | Undocumented, observed ~2000 req/hr; bursty 429s | Batched multi-ticker download (50/batch); token-bucket 4 rps / burst 8; tenacity retry with exponential jitter, max 3 attempts |
+| `nsepython` / NSE official | Nifty 500 constituents | Unofficial scraping; respect 1 req/sec | Cache constituents list 24h; falls back to last cached on failure |
+| Wikipedia (S&P 500 + Nasdaq-100 articles) | NYSE / NASDAQ universe | None | `pd.read_html` over the article tables; cached 24h. Chosen over `nasdaqtrader.com` symbol files because those include thousands of ETFs/derivatives we'd have to filter — see DECISIONS.md D-009 |
+| Finnhub `/news` + `/company-news` | Market + ticker news, sentiment passthrough | 60 calls/min (free) | Token-bucket 1 rps / burst 5; per-ticker calls only for screener-qualified + watchlist; 5-min cache; graceful skip when `FINNHUB_API_KEY` is unset |
+| FX rate source | INR↔USD | TBD (yfinance `USDINR=X` default) | Cache 1h; fallback to `exchangerate.host` per DECISIONS.md D-007 |
 
 ### News & research
 
@@ -261,9 +262,11 @@ Expected tables (initial):
 
 ## 12. Known Trade-offs (link to DECISIONS.md for detail)
 
-- NYSE / NASDAQ universe defaults to a curated large/mid-cap subset (S&P 500 + Nasdaq-100 + selected mid-caps, ~700 tickers) on free APIs. Full listings (~5,000 combined) require a paid feed.
-- `yfinance` is the default data source despite known reliability issues; swap to Polygon or Finnhub when the user provides a key.
-- AI summaries and broker integration are feature-flagged off in v1.
+- NYSE / NASDAQ universe defaults to a curated subset: **S&P 500 + Nasdaq-100 (~600 unique tickers)**, fetched from Wikipedia and cached 24h (DECISIONS.md D-001, D-009). Full ~5,000-ticker listings require a paid feed.
+- `yfinance` is the default OHLCV / fundamentals source despite known reliability issues; swap to Polygon or Finnhub paid via the `MarketDataProvider` interface when the user provides a key (DECISIONS.md D-002).
+- News in v1 is single-provider (Finnhub free tier). MarketAux + RSS land in a follow-up; the dispatcher in `news/aggregator.py` already supports multi-source merge with URL+headline dedupe.
+- RSI uses an iterative Wilder-seeded smoothing rather than `pandas.ewm(adjust=False)` because pandas seeds the EWM with the first observation while Wilder uses the SMA of the first `period` observations — the difference is meaningful and tests pin our values to Wilder's published 1978 fixture (DECISIONS.md D-010).
+- AI summaries and broker integration are feature-flagged off in v1 (DECISIONS.md D-003).
 
 ---
 

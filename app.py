@@ -8,7 +8,6 @@ import streamlit as st
 
 from config.settings import configure_logging, ensure_runtime_dirs
 from ui.components.layout import page_layout
-from ui.pages import briefing as briefing_page
 from ui.pages import dashboard as dashboard_page
 from ui.pages import settings_page
 
@@ -20,13 +19,11 @@ def main() -> None:
     with page_layout("Investment Decision-Support Dashboard"):
         page = st.sidebar.radio(
             "Navigation",
-            ["Dashboard", "Briefing", "Settings"],
+            ["Dashboard", "Settings"],
             index=0,
         )
         if page == "Dashboard":
             dashboard_page.render()
-        elif page == "Briefing":
-            briefing_page.render()
         else:
             settings_page.render()
 

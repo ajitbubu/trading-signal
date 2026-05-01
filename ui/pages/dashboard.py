@@ -1,8 +1,7 @@
-"""Main dashboard: 3-panel view (screener / news / portfolio).
+"""Main dashboard: screener + news.
 
-In v1's first ship, only the screener panel is wired. The news and
-portfolio panels render placeholder cards that point at the modules
-where their implementations live.
+Step 4 ships these two panels end-to-end. Portfolio + goal panels land in
+the next session and are intentionally not stubbed in the UI.
 """
 from __future__ import annotations
 
@@ -11,8 +10,10 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
-from data_sources.universe import Market
 from data_sources.prices import market_is_open
+from data_sources.rate_limit import log_and_reset_stats, snapshot_stats
+from data_sources.universe import Market
+from news.aggregator import fetch as fetch_news, filter_items
 from screener.runner import rank_rows, run as run_screener
 
 
@@ -48,6 +49,21 @@ def _format_screener_df(rows, top_n: int) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+def _render_provider_stats() -> None:
+    snap = snapshot_stats()
+    if not snap:
+        st.caption("Provider stats: no requests yet this cycle.")
+        return
+    rows = [
+        {"Provider": name, "Requests": int(s["requests"]),
+         "Cache hits": int(s["cache_hits"]),
+         "Effective rps": round(s["effective_rps"], 3)}
+        for name, s in snap.items()
+    ]
+    st.caption("Provider stats (current cycle):")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
 def render_screener_panel() -> None:
     st.subheader("Screener")
 
@@ -59,6 +75,7 @@ def render_screener_panel() -> None:
         help="Universe is fetched dynamically — no hardcoded tickers.",
     )
     market = options[market_label]
+    st.session_state["selected_market"] = market
 
     col_a, col_b, col_c = st.columns(3)
     with col_a:
@@ -84,6 +101,7 @@ def render_screener_panel() -> None:
     if st.button("Run screener", type="primary"):
         with st.spinner("Fetching universe, prices, fundamentals…"):
             result = run_screener(market, extra_symbols=extra_symbols)
+        log_and_reset_stats()
         st.session_state["screener_result"] = result
 
     result = st.session_state.get("screener_result")
@@ -110,28 +128,73 @@ def render_screener_panel() -> None:
         mime="text/csv",
     )
 
+    _render_provider_stats()
 
-def render_news_placeholder() -> None:
+
+def render_news_panel() -> None:
     st.subheader("News")
-    st.info(
-        "News panel ships next milestone — implementation lives in `news/`. "
-        "Provider keys go in `.env`."
-    )
+    market: Market = st.session_state.get("selected_market", Market.NYSE)
 
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        link_to_screener = st.checkbox(
+            "Linked to screener results", value=True,
+            help="Restrict the feed to tickers currently passing the screen.",
+        )
+    with col_b:
+        sentiment_filter = st.multiselect(
+            "Sentiment", ["positive", "neutral", "negative"], default=[],
+        )
+    with col_c:
+        query = st.text_input("Search headlines", value="")
 
-def render_portfolio_placeholder() -> None:
-    st.subheader("Portfolio & Goal")
-    st.info(
-        "Portfolio panel ships next milestone — implementation lives in `portfolio/` and `goals/`. "
-        "CSV schema documented in `README.md`."
+    screener_result = st.session_state.get("screener_result")
+    if link_to_screener and screener_result is not None:
+        tickers = tuple(r.symbol for r in screener_result.rows if r.qualifies)
+    else:
+        tickers = ()
+
+    if st.button("Refresh news", type="secondary"):
+        with st.spinner("Fetching news…"):
+            items = fetch_news(market=str(market.value), tickers=tickers)
+        log_and_reset_stats()
+        st.session_state["news_items"] = items
+
+    items = st.session_state.get("news_items")
+    if not items:
+        st.info("Click *Refresh news* to pull from configured providers. "
+                "Set `FINNHUB_API_KEY` in `.env` to enable Finnhub.")
+        return
+
+    filtered = filter_items(
+        items,
+        sentiments=tuple(sentiment_filter) if sentiment_filter else (),
+        tickers=tickers if link_to_screener else (),
+        query=query or None,
     )
+    st.caption(f"{len(filtered)} of {len(items)} items match filters.")
+
+    for item in filtered[:50]:
+        with st.container():
+            sent_badge = {
+                "positive": "🟢", "neutral": "⚪", "negative": "🔴",
+            }.get(item.sentiment or "neutral", "⚪")
+            published_local = item.published_at.astimezone().strftime("%Y-%m-%d %H:%M")
+            related = f" — {', '.join(item.related_tickers)}" if item.related_tickers else ""
+            st.markdown(
+                f"{sent_badge} **[{item.headline}]({item.url})**  \n"
+                f"_{item.source} · {published_local}{related}_"
+            )
+            if item.snippet:
+                st.caption(item.snippet[:300] + ("…" if len(item.snippet) > 300 else ""))
+            st.divider()
+
+    _render_provider_stats()
 
 
 def render() -> None:
-    tab1, tab2, tab3 = st.tabs(["Screener", "News", "Portfolio & Goal"])
+    tab1, tab2 = st.tabs(["Screener", "News"])
     with tab1:
         render_screener_panel()
     with tab2:
-        render_news_placeholder()
-    with tab3:
-        render_portfolio_placeholder()
+        render_news_panel()

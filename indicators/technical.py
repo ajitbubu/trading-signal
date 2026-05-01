@@ -12,21 +12,47 @@ import pandas as pd
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     """Wilder RSI on a close series.
 
-    Uses the classic Wilder smoothing (exponential with alpha = 1/period).
+    Seed = SMA of first `period` gains/losses (Wilder, 1978). After the
+    seed, smoothing is `avg_t = (avg_{t-1} * (period - 1) + x_t) / period`.
+
+    Edge cases:
+      - If both avg_gain and avg_loss are zero (perfectly flat series),
+        RSI is reported as 50 (neutral) rather than 100.
+      - If avg_loss is zero but avg_gain > 0, RSI is 100.
     """
-    if close is None or len(close) < period + 1:
-        return pd.Series([np.nan] * len(close), index=close.index)
+    n = len(close) if close is not None else 0
+    if n < period + 1:
+        return pd.Series([np.nan] * n, index=close.index if close is not None else None)
 
     delta = close.diff()
     gain = delta.clip(lower=0.0)
     loss = (-delta).clip(lower=0.0)
 
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_gain = pd.Series(np.nan, index=close.index, dtype=float)
+    avg_loss = pd.Series(np.nan, index=close.index, dtype=float)
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    out = 100.0 - (100.0 / (1.0 + rs))
-    out = out.fillna(100.0).where(avg_loss != 0, 100.0)
+    seed_gain = gain.iloc[1 : period + 1].mean()
+    seed_loss = loss.iloc[1 : period + 1].mean()
+    avg_gain.iloc[period] = seed_gain
+    avg_loss.iloc[period] = seed_loss
+
+    for i in range(period + 1, n):
+        avg_gain.iloc[i] = (avg_gain.iloc[i - 1] * (period - 1) + gain.iloc[i]) / period
+        avg_loss.iloc[i] = (avg_loss.iloc[i - 1] * (period - 1) + loss.iloc[i]) / period
+
+    out = pd.Series(np.nan, index=close.index, dtype=float)
+    for i in range(period, n):
+        ag = avg_gain.iloc[i]
+        al = avg_loss.iloc[i]
+        if pd.isna(ag) or pd.isna(al):
+            continue
+        if ag == 0 and al == 0:
+            out.iloc[i] = 50.0
+        elif al == 0:
+            out.iloc[i] = 100.0
+        else:
+            rs = ag / al
+            out.iloc[i] = 100.0 - (100.0 / (1.0 + rs))
     return out
 
 
