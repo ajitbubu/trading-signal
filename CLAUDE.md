@@ -26,7 +26,7 @@ A personal investment **decision-support dashboard** with three coordinated capa
 | Scheduler | APScheduler embedded + optional cron entry point | App-embedded for default; cron for headless reliability |
 | Concurrency | `asyncio` + `httpx` for I/O; bounded semaphores per provider | Respect rate limits cleanly |
 | Caching | `diskcache` (multi-tier TTLs) | Persists across runs; no Redis dependency |
-| Indicators | `pandas_ta` | Vetted RSI / DMA implementations |
+| Indicators | in-tree (`indicators/technical.py`) | Wilder-seeded RSI matches the 1978 fixture; `pandas_ta` rejected because its pre-release versions fail Python 3.11 install resolution (DECISIONS.md D-010) |
 | Sentiment | Provider-supplied first, `vaderSentiment` fallback | FinBERT deferred to v1.1 (compute cost) |
 | News ingestion | API adapters + `feedparser` for RSS + `trafilatura` for body extraction; `rapidfuzz` for de-duplication | Source diversity is mandatory |
 | LLM features | Optional, behind feature flag, via Anthropic API | AI summaries off by default |
@@ -36,7 +36,8 @@ A personal investment **decision-support dashboard** with three coordinated capa
 ## 3. Tech Stack & Pinned Dependencies
 
 See `requirements.txt`. Notable:
-- `yfinance`, `nsepython`, `pandas`, `pandas_ta`, `httpx`, `streamlit`, `apscheduler`, `sqlalchemy`, `diskcache`, `feedparser`, `trafilatura`, `rapidfuzz`, `vaderSentiment`, `pydantic`, `structlog`, `python-dotenv`, `pytest`.
+- `yfinance`, `nsepython`, `pandas`, `httpx`, `streamlit`, `apscheduler`, `sqlalchemy`, `diskcache`, `feedparser`, `trafilatura`, `rapidfuzz`, `vaderSentiment`, `pydantic`, `structlog`, `python-dotenv`, `pytest`.
+- Indicators are implemented in-tree (`indicators/technical.py`) — `pandas_ta` is intentionally not a dependency (DECISIONS.md D-010).
 
 ---
 
