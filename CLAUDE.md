@@ -284,7 +284,11 @@ pytest -q
 
 > Move items to DECISIONS.md once resolved.
 
-- [ ] Confirm SMTP provider for briefing email (Gmail app password, SendGrid free tier, or other).
-- [ ] Decide whether to run both NSE and US briefings, or only the user's primary market.
-- [ ] Pick FX source if USDINR via yfinance proves unreliable.
-- [ ] Backtest window: 1 year vs. 3 years for default rule-set evaluation.
+- [x] SMTP provider — Gmail App Password (D-006). `.env.example` carries the
+      required keys; any SMTP host works because the mailer only uses `smtplib`.
+- [x] NSE vs US schedule — both run by default; `BRIEFING_COMBINE=true`
+      collapses to a single combined email (D-005).
+- [x] FX source — yfinance `USDINR=X` primary, `exchangerate.host` fallback
+      after 3 consecutive failures (D-007 / D-013).
+- [x] Backtest window — 1 year for v1, 3 years deferred to v1.1 (D-004).
+      Implementation in `scripts/backtest.py`.

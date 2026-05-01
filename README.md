@@ -52,11 +52,23 @@ in `.env`.
 ```bash
 python -m briefing.run --date today --market nse
 python -m briefing.run --date today --market us
+python -m briefing.run --date today --market us --email   # also email if SMTP set
 ```
 
 To schedule briefings outside the app, add cron entries that call those
 commands at 08:00 IST and 07:30 ET respectively. The in-app scheduler
 (APScheduler) runs them automatically while the Streamlit app is open.
+
+## Backtest
+
+Walks 1 year of daily bars per market, applies the current rule-set, and
+reports rolling hit-rate per rule. Persists every fired signal to
+`signals_history` (used by the Signals page hit-rate panel).
+
+```bash
+python -m scripts.backtest --market us --lookback-days 365
+python -m scripts.backtest --market nse
+```
 
 ## CSV import (portfolio)
 
@@ -80,6 +92,27 @@ A downloadable template is available from the portfolio page.
 ```bash
 pytest -q
 ```
+
+CI runs `pytest -q` on every push and pull request via
+`.github/workflows/test.yml`.
+
+## End-to-end flow
+
+1. `streamlit run app.py` — opens `http://localhost:8501`.
+2. **Portfolio & Goal** tab: upload `Portfolio_Positions_*.csv` (Fidelity
+   or canonical), or use the manual-add form. Enter starting capital +
+   target % to populate the goal panel.
+3. **Dashboard** tab: pick a market, click **Run screener**, then
+   **Refresh news**. The news panel can be filtered to screener-qualified
+   tickers via the toggle.
+4. **Signals** tab: see per-position rule firings. Tick "Persist fired
+   signals" to feed the hit-rate panel. Use the sizing calculator for
+   any new candidate.
+5. **Briefing** tab: click "Generate US briefing now" — the markdown
+   snapshot lands at `briefings/YYYY-MM-DD-us.md` and (if SMTP is
+   configured) an email is sent to `BRIEFING_EMAIL_TO`.
+6. Backtest a year of history with `python -m scripts.backtest --market us`
+   to populate the hit-rate panel with real numbers.
 
 ## Backups
 

@@ -96,6 +96,7 @@ def _fetch_news_and_signals(holdings, market: Market):
     from news.aggregator import fetch as fetch_news
     from data_sources.prices import get_history
     from data_sources.universe import Ticker
+    from signals.history import record_fired_signals
     from signals.rules import evaluate_position
 
     held_tickers = tuple(h.ticker for h in holdings)
@@ -141,6 +142,19 @@ def _fetch_news_and_signals(holdings, market: Market):
                 negative_news_24h=negative_24h_by_ticker.get(h.ticker, 0),
             )
         )
+
+    fired_prices = {}
+    fired = []
+    for sig in signals:
+        if not sig.fired or sig.direction == "hold":
+            continue
+        df = histories.get(sig.ticker)
+        if df is None or df.empty:
+            continue
+        fired_prices[sig.ticker] = float(df["Close"].iloc[-1])
+        fired.append(sig)
+    if fired:
+        record_fired_signals(fired, prices=fired_prices)
 
     return news_items, signals
 

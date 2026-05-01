@@ -151,3 +151,22 @@ to run when the app isn't open).
 **Revisit when:** missed briefings become a complaint, in which case
 we move the scheduler to a separate `scripts/briefing_daemon.py` with
 a systemd/launchd unit.
+
+### D-016: Hit definition for backtest is a 1% absolute move
+**Context:** §6 / answers §27. Every signal needs a binary hit/miss
+verdict to compute rolling hit-rate. Without a noise threshold every
+signal "hits" because intraday price always wiggles.
+**Decision:** A signal hits when the close at the chosen horizon
+(5/20/60d) has moved ≥ 1% in the rule's intended direction:
+- Down ≥ 1% for stop_loss / trailing_stop / technical_breakdown /
+  negative_news_cluster (and any exit rule by default).
+- Up ≥ 1% for profit_target (and any entry rule by default).
+The threshold is hard-coded in `signals/history.py::_is_hit`. We can
+parameterize it later if we add other horizons.
+
+### D-017: Backtest universe capped at 100 tickers per run
+**Context:** Free-tier yfinance limits don't sustain a 600-ticker × 252-bar
+walk in one process.
+**Decision:** `scripts/backtest.py` takes the first 100 tickers with
+≥60 bars of history. To cover the rest, run multiple times with a
+custom universe slice (future work) or upgrade to a paid feed.

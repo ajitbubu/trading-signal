@@ -12,6 +12,7 @@ from config.settings import settings
 from data_sources.prices import get_history
 from data_sources.universe import Market, Ticker
 from portfolio.models import Holding, get_session
+from signals.history import hit_rate_per_rule, record_fired_signals
 from signals.rules import evaluate_position
 from signals.sizing import size as size_position
 
@@ -37,6 +38,15 @@ def _render_position_signals() -> None:
         for h in holdings
     ]
     histories = get_history(yf_tickers, lookback_days=60)
+
+    persist = st.checkbox(
+        "Persist fired signals to history (for hit-rate tracking)",
+        value=False,
+        help="Adds rows to signals_history. Disable to evaluate without writing.",
+    )
+
+    fired_for_persistence = []
+    fired_prices: dict[str, float] = {}
 
     for h in holdings:
         df = histories.get(h.ticker)
@@ -67,11 +77,51 @@ def _render_position_signals() -> None:
                     f"{badge_color.get(s.direction, '⚪')} **{s.ticker}** · "
                     f"`{s.direction}/{s.rule}` — {s.detail}"
                 )
+                if persist and s.fired and s.direction != "hold":
+                    fired_for_persistence.append(s)
+                    fired_prices[s.ticker] = last_price
             st.caption(
                 f"avg cost {h.avg_cost:.2f} · last {last_price:.2f} · "
                 f"high since entry {high_since:.2f}"
             )
             st.divider()
+
+    if fired_for_persistence:
+        n = record_fired_signals(fired_for_persistence, prices=fired_prices)
+        st.success(f"Persisted {n} fired signals to history.")
+
+
+def _render_hit_rate_panel() -> None:
+    st.markdown("#### Hit-rate per rule (rolling)")
+    horizon = st.selectbox(
+        "Horizon",
+        ["price_5d", "price_20d", "price_60d"],
+        index=1,
+        help="Hit-rate over the next N trading days after the signal fired.",
+    )
+    rates = hit_rate_per_rule(horizon=horizon)
+    if not rates:
+        st.info(
+            "No matured signals yet. Run `python -m scripts.backtest --market us` "
+            "or persist live signals (checkbox above) to populate."
+        )
+        return
+
+    import pandas as pd
+
+    df = pd.DataFrame(
+        [
+            {
+                "Rule": r.rule,
+                "Direction": r.direction,
+                "N": r.sample_size,
+                "Hits": r.hits,
+                "Hit %": f"{r.hit_rate:.1%}",
+            }
+            for r in rates
+        ]
+    )
+    st.dataframe(df, hide_index=True, use_container_width=True)
 
 
 def _render_sizing() -> None:
@@ -104,5 +154,7 @@ def _render_sizing() -> None:
 def render() -> None:
     st.subheader("Signals & Sizing")
     _render_position_signals()
+    st.divider()
+    _render_hit_rate_panel()
     st.divider()
     _render_sizing()
