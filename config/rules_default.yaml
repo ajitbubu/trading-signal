@@ -1,0 +1,46 @@
+# Default signal rules. Persisted overrides live in the `settings` table
+# and are merged on top of these at startup.
+#
+# Edit in the UI → Settings page; do not hand-edit this file in production.
+
+screener:
+  pe_max: 20.0
+  volume_ratio_min: 2.0
+  rsi_period: 14
+  rsi_min: 50.0
+  exclude_negative_pe: true
+
+entry_tiebreakers:
+  dma_50_above_200: { enabled: true, required: false }
+  no_earnings_within_days: { enabled: true, required: false, days: 3 }
+  non_negative_sentiment_24h: { enabled: false, required: false }
+
+exit:
+  stop_loss_pct: -0.08
+  profit_target_pct: 0.25
+  trailing_stop_pct: 0.10
+  technical_breakdown:
+    enabled: true
+    below_dma_50: true
+    volume_min_ratio: 1.5
+  negative_news_cluster:
+    enabled: true
+    min_negative_items_24h: 3
+
+sizing:
+  max_risk_per_trade_pct: 0.02
+
+goal:
+  annual_target_pct: 0.50
+  feasibility_thresholds_cagr:
+    on_track: 0.12
+    stretch: 0.25
+    aggressive: 0.50
+
+briefing:
+  schedules:
+    nse: { hour: 8, minute: 0, tz: "Asia/Kolkata" }
+    us:  { hour: 7, minute: 30, tz: "America/New_York" }
+  combine: false
+  email: true
+  inapp: true
